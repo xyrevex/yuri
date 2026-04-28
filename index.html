@@ -4,9 +4,7 @@
   <title>Yuri Art Gallery</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
@@ -22,10 +20,6 @@
     }
 
     .top {
-      display: flex;
-      justify-content: space-between;
-      align-items: end;
-      gap: 15px;
       margin-bottom: 25px;
       border-bottom: 1px solid #292932;
       padding-bottom: 18px;
@@ -155,164 +149,146 @@
     }
 
     @media (max-width: 600px) {
-      .top {
-        display: block;
-      }
-
-      .upload-grid {
-        grid-template-columns: 1fr;
-      }
-
-      textarea, #file, button {
-        grid-column: span 1;
-      }
+      .upload-grid { grid-template-columns: 1fr; }
+      textarea, #file, button { grid-column: span 1; }
     }
   </style>
 </head>
 <body>
 
-  <div class="wrap">
-    <div class="top">
-      <div>
-        <h1>Yuri Art Gallery</h1>
-        <div class="sub">post art, browse it, download it</div>
-      </div>
-    </div>
-
-    <div class="box">
-      <div class="upload-grid">
-        <input id="username" placeholder="Username">
-        <input id="title" placeholder="Title">
-        <textarea id="description" placeholder="Description"></textarea>
-        <input id="file" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
-        <button onclick="uploadArt()">Upload</button>
-      </div>
-      <p id="status"></p>
-    </div>
-
-    <div id="gallery" class="grid"></div>
+<div class="wrap">
+  <div class="top">
+    <h1>Yuri Art Gallery</h1>
+    <div class="sub">post art, browse it, download it</div>
   </div>
 
-  <script type="module">
-    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+  <div class="box">
+    <div class="upload-grid">
+      <input id="username" placeholder="Username">
+      <input id="title" placeholder="Title">
+      <textarea id="description" placeholder="Description"></textarea>
+      <input id="file" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif">
+      <button onclick="uploadArt()">Upload</button>
+    </div>
+    <p id="status"></p>
+  </div>
 
-    const SUPABASE_URL = "https://elxdfsnccwqqqjiujywi.supabase.co";
-    const SUPABASE_KEY = "sb_publishable_ENl8RAMVFXPJ1OKxckfsww_NpsjLIH0";
+  <div id="gallery" class="grid"></div>
+</div>
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-    window.uploadArt = async function () {
-      const username = document.getElementById("username").value.trim() || "anonymous";
-      const title = document.getElementById("title").value.trim();
-      const description = document.getElementById("description").value.trim();
-      const file = document.getElementById("file").files[0];
-      const status = document.getElementById("status");
+const SUPABASE_URL = "https://elxdfsnccwqqqjiujywi.supabase.co";
+const SUPABASE_KEY = "sb_publishable_ENl8RAMVFXPJ1OKxckfsww_NpsjLIH0";
 
-      if (!title || !file) {
-        status.textContent = "add a title and image first";
-        return;
-      }
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-      const allowed = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-      if (!allowed.includes(file.type)) {
-        status.textContent = "only png, jpg, webp, or gif";
-        return;
-      }
+window.uploadArt = async function () {
+  const username = document.getElementById("username").value.trim() || "anonymous";
+  const title = document.getElementById("title").value.trim();
+  const description = document.getElementById("description").value.trim();
+  const files = [...document.getElementById("file").files];
+  const status = document.getElementById("status");
 
-      if (file.size > 10 * 1024 * 1024) {
-        status.textContent = "max file size is 10mb";
-        return;
-      }
+  if (!title || files.length === 0) {
+    status.textContent = "add a title and at least one image";
+    return;
+  }
 
-      const safeName = file.name.replace(/[^a-z0-9._-]/gi, "_");
-      const filePath = Date.now() + "_" + safeName;
+  const allowed = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
-      status.textContent = "uploading...";
+  for (const file of files) {
+    if (!allowed.includes(file.type)) {
+      status.textContent = file.name + " invalid type";
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      status.textContent = file.name + " over 10mb";
+      return;
+    }
+  }
 
-      const upload = await supabase.storage
-        .from("art")
-        .upload(filePath, file);
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    status.textContent = "uploading " + (i+1) + "/" + files.length;
 
-      if (upload.error) {
-        status.textContent = upload.error.message;
-        return;
-      }
+    const safeName = file.name.replace(/[^a-z0-9._-]/gi, "_");
+    const filePath = Date.now() + "_" + i + "_" + safeName;
 
-      const imageUrl = supabase.storage
-        .from("art")
-        .getPublicUrl(filePath)
-        .data
-        .publicUrl;
-
-      const post = await supabase
-        .from("posts")
-        .insert({
-          username,
-          title,
-          description,
-          image_url: imageUrl,
-          file_path: filePath
-        });
-
-      if (post.error) {
-        status.textContent = post.error.message;
-        return;
-      }
-
-      status.textContent = "uploaded";
-      document.getElementById("title").value = "";
-      document.getElementById("description").value = "";
-      document.getElementById("file").value = "";
-
-      loadGallery();
-    };
-
-    async function loadGallery() {
-      const gallery = document.getElementById("gallery");
-
-      const result = await supabase
-        .from("posts")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (result.error) {
-        gallery.textContent = result.error.message;
-        return;
-      }
-
-      gallery.innerHTML = "";
-
-      result.data.forEach(post => {
-        const card = document.createElement("div");
-        card.className = "card";
-
-        const time = new Date(post.created_at).toLocaleString();
-
-        card.innerHTML = `
-          <img src="${post.image_url}" loading="lazy">
-          <div class="info">
-            <h3>${clean(post.title)}</h3>
-            <div class="meta">by ${clean(post.username || "anonymous")} · ${clean(time)}</div>
-            <div class="desc">${clean(post.description || "")}</div>
-            <a class="download" href="${post.image_url}" download>download</a>
-          </div>
-        `;
-
-        gallery.appendChild(card);
-      });
+    const upload = await supabase.storage.from("art").upload(filePath, file);
+    if (upload.error) {
+      status.textContent = upload.error.message;
+      return;
     }
 
-    function clean(text) {
-      return String(text)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-    }
+    const imageUrl = supabase.storage.from("art").getPublicUrl(filePath).data.publicUrl;
 
-    loadGallery();
-  </script>
+    const post = await supabase.from("posts").insert({
+      username,
+      title: files.length > 1 ? title + " " + (i+1) : title,
+      description,
+      image_url: imageUrl,
+      file_path: filePath
+    });
+
+    if (post.error) {
+      status.textContent = post.error.message;
+      return;
+    }
+  }
+
+  status.textContent = "uploaded";
+  document.getElementById("file").value = "";
+  loadGallery();
+};
+
+async function loadGallery() {
+  const gallery = document.getElementById("gallery");
+
+  const result = await supabase
+    .from("posts")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (result.error) {
+    gallery.textContent = result.error.message;
+    return;
+  }
+
+  gallery.innerHTML = "";
+
+  result.data.forEach(post => {
+    const time = new Date(post.created_at).toLocaleString();
+
+    const card = document.createElement("div");
+    card.className = "card";
+
+    card.innerHTML = `
+      <img src="${post.image_url}" loading="lazy">
+      <div class="info">
+        <h3>${clean(post.title)}</h3>
+        <div class="meta">by ${clean(post.username || "anonymous")} · ${time}</div>
+        <div class="desc">${clean(post.description || "")}</div>
+        <a class="download" href="${post.image_url}" download>download</a>
+      </div>
+    `;
+
+    gallery.appendChild(card);
+  });
+}
+
+function clean(text) {
+  return String(text)
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
+loadGallery();
+</script>
 
 </body>
 </html>
