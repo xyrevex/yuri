@@ -20,20 +20,31 @@
     }
 
     .top {
-      margin-bottom: 25px;
+      margin-bottom: 20px;
       border-bottom: 1px solid #292932;
-      padding-bottom: 18px;
+      padding-bottom: 14px;
     }
 
-    h1 {
-      margin: 0;
-      font-size: 32px;
+    h1 { margin: 0; }
+
+    .tabs {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
     }
 
-    .sub {
-      color: #aaa;
-      margin-top: 5px;
+    .tab {
+      padding: 8px 14px;
+      border-radius: 8px;
+      background: #18181d;
+      border: 1px solid #292932;
+      cursor: pointer;
       font-size: 14px;
+    }
+
+    .tab.active {
+      background: #ff6fae;
+      border-color: #ff6fae;
     }
 
     .box {
@@ -41,7 +52,7 @@
       border: 1px solid #292932;
       border-radius: 14px;
       padding: 16px;
-      margin-bottom: 25px;
+      margin-bottom: 20px;
     }
 
     .upload-grid {
@@ -53,10 +64,8 @@
     input, textarea, button {
       width: 100%;
       border: 0;
-      outline: 0;
       border-radius: 10px;
       padding: 11px;
-      font-size: 14px;
     }
 
     input, textarea {
@@ -66,31 +75,16 @@
     }
 
     textarea {
-      resize: vertical;
-      min-height: 80px;
       grid-column: span 2;
     }
 
-    #file {
-      grid-column: span 2;
-    }
+    #file { grid-column: span 2; }
 
     button {
       background: #ff6fae;
       color: white;
-      font-weight: bold;
       cursor: pointer;
       grid-column: span 2;
-    }
-
-    button:hover {
-      filter: brightness(1.08);
-    }
-
-    #status {
-      color: #bbb;
-      margin-bottom: 0;
-      font-size: 14px;
     }
 
     .grid {
@@ -110,56 +104,41 @@
       width: 100%;
       height: 260px;
       object-fit: cover;
-      display: block;
-      background: #08080a;
     }
 
-    .info {
-      padding: 13px;
-    }
-
-    .info h3 {
-      margin: 0 0 6px;
-      font-size: 17px;
-    }
+    .info { padding: 12px; }
 
     .meta {
       color: #aaa;
       font-size: 12px;
-      margin-bottom: 8px;
-    }
-
-    .desc {
-      color: #ddd;
-      font-size: 14px;
-      line-height: 1.35;
-      white-space: pre-wrap;
     }
 
     .download {
       display: inline-block;
-      margin-top: 10px;
+      margin-top: 8px;
       color: #ff9ccc;
-      text-decoration: none;
-      font-size: 14px;
     }
 
-    .download:hover {
-      text-decoration: underline;
-    }
-
-    @media (max-width: 600px) {
-      .upload-grid { grid-template-columns: 1fr; }
-      textarea, #file, button { grid-column: span 1; }
+    .nsfw-warning {
+      text-align: center;
+      padding: 40px;
+      border: 1px solid #292932;
+      border-radius: 14px;
+      background: #18181d;
     }
   </style>
 </head>
 <body>
 
 <div class="wrap">
+
   <div class="top">
     <h1>Yuri Art Gallery</h1>
-    <div class="sub">no hard NSFW until i make a thing for that</div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('sfw')" id="sfwTab">SFW</div>
+      <div class="tab" onclick="switchTab('nsfw')" id="nsfwTab">NSFW</div>
+    </div>
   </div>
 
   <div class="box">
@@ -168,123 +147,127 @@
       <input id="title" placeholder="Title">
       <textarea id="description" placeholder="Description"></textarea>
       <input id="file" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif">
+      
+      <label style="grid-column: span 2;">
+        <input type="checkbox" id="nsfwCheck"> Mark as NSFW
+      </label>
+
       <button onclick="uploadArt()">Upload</button>
     </div>
     <p id="status"></p>
   </div>
 
   <div id="gallery" class="grid"></div>
+
 </div>
 
 <script type="module">
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = "https://elxdfsnccwqqqjiujywi.supabase.co";
-const SUPABASE_KEY = "sb_publishable_ENl8RAMVFXPJ1OKxckfsww_NpsjLIH0";
+const supabase = createClient(
+  "https://elxdfsnccwqqqjiujywi.supabase.co",
+  "sb_publishable_ENl8RAMVFXPJ1OKxckfsww_NpsjLIH0"
+);
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+let currentTab = "sfw";
+let nsfwUnlocked = false;
+
+window.switchTab = function(tab) {
+  if (tab === "nsfw" && !nsfwUnlocked) {
+    showWarning();
+    return;
+  }
+
+  currentTab = tab;
+
+  document.getElementById("sfwTab").classList.remove("active");
+  document.getElementById("nsfwTab").classList.remove("active");
+
+  document.getElementById(tab + "Tab").classList.add("active");
+
+  loadGallery();
+};
+
+function showWarning() {
+  const gallery = document.getElementById("gallery");
+  gallery.innerHTML = `
+    <div class="nsfw-warning">
+      <h2>NSFW Content</h2>
+      <p>This section contains adult content.</p>
+      <button onclick="confirmNSFW()">I understand</button>
+    </div>
+  `;
+}
+
+window.confirmNSFW = function() {
+  nsfwUnlocked = true;
+  switchTab("nsfw");
+};
 
 window.uploadArt = async function () {
   const username = document.getElementById("username").value.trim() || "anonymous";
   const title = document.getElementById("title").value.trim();
   const description = document.getElementById("description").value.trim();
   const files = [...document.getElementById("file").files];
+  const nsfw = document.getElementById("nsfwCheck").checked;
   const status = document.getElementById("status");
 
   if (!title || files.length === 0) {
-    status.textContent = "add a title and at least one image";
+    status.textContent = "add title + file";
     return;
-  }
-
-  const allowed = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-
-  for (const file of files) {
-    if (!allowed.includes(file.type)) {
-      status.textContent = file.name + " invalid type";
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      status.textContent = file.name + " over 10mb";
-      return;
-    }
   }
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     status.textContent = "uploading " + (i+1) + "/" + files.length;
 
-    const safeName = file.name.replace(/[^a-z0-9._-]/gi, "_");
-    const filePath = Date.now() + "_" + i + "_" + safeName;
+    const filePath = Date.now() + "_" + file.name;
 
-    const upload = await supabase.storage.from("art").upload(filePath, file);
-    if (upload.error) {
-      status.textContent = upload.error.message;
-      return;
-    }
+    await supabase.storage.from("art").upload(filePath, file);
 
-    const imageUrl = supabase.storage.from("art").getPublicUrl(filePath).data.publicUrl;
+    const url = supabase.storage.from("art").getPublicUrl(filePath).data.publicUrl;
 
-    const post = await supabase.from("posts").insert({
+    await supabase.from("posts").insert({
       username,
-      title: files.length > 1 ? title + " " + (i+1) : title,
+      title,
       description,
-      image_url: imageUrl,
-      file_path: filePath
+      image_url: url,
+      file_path: filePath,
+      nsfw
     });
-
-    if (post.error) {
-      status.textContent = post.error.message;
-      return;
-    }
   }
 
   status.textContent = "uploaded";
-  document.getElementById("file").value = "";
   loadGallery();
 };
 
 async function loadGallery() {
   const gallery = document.getElementById("gallery");
 
-  const result = await supabase
-    .from("posts")
-    .select("*")
-    .order("created_at", { ascending: false });
-
-  if (result.error) {
-    gallery.textContent = result.error.message;
-    return;
-  }
+  const res = await supabase.from("posts").select("*").order("created_at", { ascending: false });
 
   gallery.innerHTML = "";
 
-  result.data.forEach(post => {
-    const time = new Date(post.created_at).toLocaleString();
+  res.data
+    .filter(p => currentTab === "nsfw" ? p.nsfw : !p.nsfw)
+    .forEach(post => {
+      const time = new Date(post.created_at).toLocaleString();
 
-    const card = document.createElement("div");
-    card.className = "card";
+      const card = document.createElement("div");
+      card.className = "card";
 
-    card.innerHTML = `
-      <img src="${post.image_url}" loading="lazy">
-      <div class="info">
-        <h3>${clean(post.title)}</h3>
-        <div class="meta">by ${clean(post.username || "anonymous")} · ${time}</div>
-        <div class="desc">${clean(post.description || "")}</div>
-        <a class="download" href="${post.image_url}" download>download</a>
-      </div>
-    `;
+      card.innerHTML = `
+        <img src="${post.image_url}">
+        <div class="info">
+          <b>${post.title}</b>
+          <div class="meta">by ${post.username} · ${time}</div>
+          <div>${post.description || ""}</div>
+          <a class="download" href="${post.image_url}" download>download</a>
+        </div>
+      `;
 
-    gallery.appendChild(card);
-  });
-}
-
-function clean(text) {
-  return String(text)
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
+      gallery.appendChild(card);
+    });
 }
 
 loadGallery();
