@@ -41,6 +41,7 @@
       display: flex;
       gap: 10px;
       margin-top: 14px;
+      flex-wrap: wrap;
     }
 
     .tab {
@@ -296,6 +297,19 @@
       background: #d9365f;
     }
 
+    .same-group {
+      grid-column: 1 / -1;
+      background: #18181d;
+      border: 1px solid #292932;
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .same-group h2 {
+      margin: 0 0 14px;
+      font-size: 20px;
+    }
+
     @media (max-width: 600px) {
       .upload-grid, .admin-grid { grid-template-columns: 1fr; }
       textarea, #file, button, .nsfw-toggle, .full { grid-column: span 1; }
@@ -346,6 +360,11 @@
     <div class="top">
       <h1>Admin</h1>
       <div class="sub">edit or delete posts</div>
+
+      <div class="tabs" id="adminTabs" style="display:none">
+        <div class="tab active" id="allPostsTab" onclick="switchAdminTab('all')">All Posts</div>
+        <div class="tab" id="sameImagesTab" onclick="switchAdminTab('same')">Same Images</div>
+      </div>
     </div>
 
     <div class="box" id="loginBox">
@@ -389,6 +408,7 @@ const SUPABASE_KEY = "sb_publishable_ENl8RAMVFXPJ1OKxckfsww_NpsjLIH0";
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let currentTab = "sfw";
+let adminTab = "all";
 let nsfwUnlocked = false;
 
 const allowed = ["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -401,11 +421,8 @@ function renderPage() {
   document.getElementById("mainPage").style.display = isAdminPage() ? "none" : "block";
   document.getElementById("adminPage").style.display = isAdminPage() ? "block" : "none";
 
-  if (isAdminPage()) {
-    checkAdmin();
-  } else {
-    loadGallery();
-  }
+  if (isAdminPage()) checkAdmin();
+  else loadGallery();
 }
 
 window.addEventListener("hashchange", renderPage);
@@ -425,6 +442,16 @@ window.switchTab = function(tab) {
   loadGallery();
 };
 
+window.switchAdminTab = function(tab) {
+  adminTab = tab;
+
+  document.getElementById("allPostsTab").classList.toggle("active", tab === "all");
+  document.getElementById("sameImagesTab").classList.toggle("active", tab === "same");
+
+  if (tab === "all") loadAdminPosts();
+  if (tab === "same") loadSameImages();
+};
+
 window.closeNSFWPopup = function() {
   document.getElementById("nsfwModal").style.display = "none";
 };
@@ -434,6 +461,15 @@ window.confirmNSFW = function() {
   document.getElementById("nsfwModal").style.display = "none";
   switchTab("nsfw");
 };
+
+async function getImageHash(file) {
+  const buf = await file.arrayBuffer();
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+
+  return [...new Uint8Array(hash)]
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 window.uploadArt = async function () {
   const username = document.getElementById("username").value.trim() || "anonymous";
@@ -466,6 +502,7 @@ window.uploadArt = async function () {
     await Promise.all(files.map(async (file, i) => {
       const safeName = file.name.replace(/[^a-z0-9._-]/gi, "_");
       const filePath = crypto.randomUUID() + "_" + safeName;
+      const imageHash = await getImageHash(file);
 
       const upload = await supabase.storage.from("art").upload(filePath, file);
 
@@ -479,6 +516,7 @@ window.uploadArt = async function () {
         description,
         image_url: imageUrl,
         file_path: filePath,
+        image_hash: imageHash,
         nsfw
       });
 
@@ -557,54 +595,105 @@ async function checkAdmin() {
 
   document.getElementById("loginBox").style.display = loggedIn ? "none" : "block";
   document.getElementById("adminControls").style.display = loggedIn ? "block" : "none";
+  document.getElementById("adminTabs").style.display = loggedIn ? "flex" : "none";
 
   if (loggedIn) {
-    loadAdminPosts();
+    if (adminTab === "all") loadAdminPosts();
+    if (adminTab === "same") loadSameImages();
   } else {
     document.getElementById("adminPosts").innerHTML = "";
   }
 }
 
-async function loadAdminPosts() {
-  const adminPosts = document.getElementById("adminPosts");
-
+async function getAllPosts() {
   const result = await supabase
     .from("posts")
     .select("*")
     .order("created_at", { ascending: false });
 
-  if (result.error) {
-    adminPosts.textContent = result.error.message;
-    return;
+  if (result.error) throw new Error(result.error.message);
+  return result.data;
+}
+
+async function loadAdminPosts() {
+  const adminPosts = document.getElementById("adminPosts");
+
+  try {
+    const posts = await getAllPosts();
+    adminPosts.innerHTML = "";
+    posts.forEach(post => adminPosts.appendChild(makeAdminCard(post)));
+  } catch (err) {
+    adminPosts.textContent = err.message;
   }
+}
 
-  adminPosts.innerHTML = "";
+async function loadSameImages() {
+  const adminPosts = document.getElementById("adminPosts");
 
-  result.data.forEach(post => {
-    const card = document.createElement("div");
-    card.className = "admin-card";
+  try {
+    const posts = await getAllPosts();
+    const groups = {};
 
-    card.innerHTML = `
-      <img src="${cleanAttr(post.image_url)}" loading="lazy">
+    for (const post of posts) {
+      if (!post.image_hash) continue;
+      if (!groups[post.image_hash]) groups[post.image_hash] = [];
+      groups[post.image_hash].push(post);
+    }
 
-      <input id="title_${post.id}" value="${cleanAttr(post.title || "")}" placeholder="Title">
-      <input id="username_${post.id}" value="${cleanAttr(post.username || "")}" placeholder="Username">
-      <textarea id="description_${post.id}" placeholder="Description">${clean(post.description || "")}</textarea>
+    const matches = Object.values(groups).filter(group => group.length > 1);
 
-      <label class="nsfw-toggle full">
-        <input type="checkbox" id="nsfw_${post.id}" ${post.nsfw ? "checked" : ""}>
-        <div class="nsfw-box"></div>
-        <span>Mark as NSFW</span>
-      </label>
+    adminPosts.innerHTML = "";
 
-      <input class="full" id="image_${post.id}" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+    if (matches.length === 0) {
+      adminPosts.innerHTML = `<div class="box full">no same images found</div>`;
+      return;
+    }
 
-      <button onclick="savePost('${post.id}', '${cleanJs(post.file_path || "")}')">Save changes</button>
-      <button class="danger" onclick="deletePost('${post.id}', '${cleanJs(post.file_path || "")}')">Delete post</button>
-    `;
+    matches.forEach(group => {
+      const box = document.createElement("div");
+      box.className = "same-group";
 
-    adminPosts.appendChild(card);
-  });
+      const title = document.createElement("h2");
+      title.textContent = "Same image group (" + group.length + ")";
+      box.appendChild(title);
+
+      const grid = document.createElement("div");
+      grid.className = "grid";
+
+      group.forEach(post => grid.appendChild(makeAdminCard(post)));
+
+      box.appendChild(grid);
+      adminPosts.appendChild(box);
+    });
+  } catch (err) {
+    adminPosts.textContent = err.message;
+  }
+}
+
+function makeAdminCard(post) {
+  const card = document.createElement("div");
+  card.className = "admin-card";
+
+  card.innerHTML = `
+    <img src="${cleanAttr(post.image_url)}" loading="lazy">
+
+    <input id="title_${post.id}" value="${cleanAttr(post.title || "")}" placeholder="Title">
+    <input id="username_${post.id}" value="${cleanAttr(post.username || "")}" placeholder="Username">
+    <textarea id="description_${post.id}" placeholder="Description">${clean(post.description || "")}</textarea>
+
+    <label class="nsfw-toggle full">
+      <input type="checkbox" id="nsfw_${post.id}" ${post.nsfw ? "checked" : ""}>
+      <div class="nsfw-box"></div>
+      <span>Mark as NSFW</span>
+    </label>
+
+    <input class="full" id="image_${post.id}" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+
+    <button onclick="savePost('${post.id}', '${cleanJs(post.file_path || "")}')">Save changes</button>
+    <button class="danger" onclick="deletePost('${post.id}', '${cleanJs(post.file_path || "")}')">Delete post</button>
+  `;
+
+  return card;
 }
 
 window.savePost = async function(id, oldFilePath) {
@@ -624,6 +713,7 @@ window.savePost = async function(id, oldFilePath) {
 
       const safeName = file.name.replace(/[^a-z0-9._-]/gi, "_");
       const newFilePath = crypto.randomUUID() + "_" + safeName;
+      const imageHash = await getImageHash(file);
 
       const upload = await supabase.storage.from("art").upload(newFilePath, file);
       if (upload.error) throw new Error(upload.error.message);
@@ -632,6 +722,7 @@ window.savePost = async function(id, oldFilePath) {
 
       updateData.image_url = imageUrl;
       updateData.file_path = newFilePath;
+      updateData.image_hash = imageHash;
 
       if (oldFilePath) {
         await supabase.storage.from("art").remove([oldFilePath]);
@@ -641,7 +732,8 @@ window.savePost = async function(id, oldFilePath) {
     const update = await supabase.from("posts").update(updateData).eq("id", id);
     if (update.error) throw new Error(update.error.message);
 
-    loadAdminPosts();
+    if (adminTab === "all") loadAdminPosts();
+    if (adminTab === "same") loadSameImages();
   } catch (err) {
     alert(err.message);
   }
@@ -661,7 +753,8 @@ window.deletePost = async function(id, filePath) {
     await supabase.storage.from("art").remove([filePath]);
   }
 
-  loadAdminPosts();
+  if (adminTab === "all") loadAdminPosts();
+  if (adminTab === "same") loadSameImages();
 };
 
 function clean(text) {
