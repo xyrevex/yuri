@@ -68,13 +68,13 @@
       margin-bottom: 25px;
     }
 
-    .upload-grid {
+    .upload-grid, .admin-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
     }
 
-    input, textarea, button {
+    input, textarea, button, select {
       width: 100%;
       border: 0;
       outline: 0;
@@ -83,7 +83,7 @@
       font-size: 14px;
     }
 
-    input, textarea {
+    input, textarea, select {
       background: #101014;
       color: white;
       border: 1px solid #2d2d36;
@@ -95,7 +95,7 @@
       grid-column: span 2;
     }
 
-    #file {
+    #file, .full {
       grid-column: span 2;
     }
 
@@ -111,7 +111,7 @@
       filter: brightness(1.08);
     }
 
-    #status {
+    #status, #adminStatus {
       color: #bbb;
       margin-bottom: 0;
       font-size: 14px;
@@ -271,9 +271,34 @@
       background: #2a2a34;
     }
 
+    #adminPage {
+      display: none;
+    }
+
+    .admin-card {
+      background: #18181d;
+      border: 1px solid #292932;
+      border-radius: 14px;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .admin-card img {
+      width: 100%;
+      max-height: 280px;
+      object-fit: cover;
+      border-radius: 10px;
+      background: #08080a;
+    }
+
+    .danger {
+      background: #d9365f;
+    }
+
     @media (max-width: 600px) {
-      .upload-grid { grid-template-columns: 1fr; }
-      textarea, #file, button, .nsfw-toggle { grid-column: span 1; }
+      .upload-grid, .admin-grid { grid-template-columns: 1fr; }
+      textarea, #file, button, .nsfw-toggle, .full { grid-column: span 1; }
       .modal-buttons { grid-template-columns: 1fr; }
     }
   </style>
@@ -281,37 +306,63 @@
 
 <body>
 
-<div class="wrap">
-  <div class="top">
-    <h1>Yuri Art Gallery</h1>
-    <div class="sub">post art, browse it, download it</div>
+<div id="mainPage">
+  <div class="wrap">
+    <div class="top">
+      <h1>Yuri Art Gallery</h1>
+      <div class="sub">post art, browse it, download it</div>
 
-    <div class="tabs">
-      <div class="tab active" id="sfwTab" onclick="switchTab('sfw')">SFW</div>
-      <div class="tab" id="nsfwTab" onclick="switchTab('nsfw')">NSFW</div>
-    </div>
-  </div>
-
-  <div class="box">
-    <div class="upload-grid">
-      <input id="username" placeholder="Username">
-      <input id="title" placeholder="Title">
-      <textarea id="description" placeholder="Description"></textarea>
-      <input id="file" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif">
-
-      <label class="nsfw-toggle">
-        <input type="checkbox" id="nsfwCheck">
-        <div class="nsfw-box"></div>
-        <span>Mark as NSFW</span>
-      </label>
-
-      <button onclick="uploadArt()">Upload</button>
+      <div class="tabs">
+        <div class="tab active" id="sfwTab" onclick="switchTab('sfw')">SFW</div>
+        <div class="tab" id="nsfwTab" onclick="switchTab('nsfw')">NSFW</div>
+      </div>
     </div>
 
-    <p id="status"></p>
-  </div>
+    <div class="box">
+      <div class="upload-grid">
+        <input id="username" placeholder="Username">
+        <input id="title" placeholder="Title">
+        <textarea id="description" placeholder="Description"></textarea>
+        <input id="file" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif">
 
-  <div id="gallery" class="grid"></div>
+        <label class="nsfw-toggle">
+          <input type="checkbox" id="nsfwCheck">
+          <div class="nsfw-box"></div>
+          <span>Mark as NSFW</span>
+        </label>
+
+        <button onclick="uploadArt()">Upload</button>
+      </div>
+
+      <p id="status"></p>
+    </div>
+
+    <div id="gallery" class="grid"></div>
+  </div>
+</div>
+
+<div id="adminPage">
+  <div class="wrap">
+    <div class="top">
+      <h1>Admin</h1>
+      <div class="sub">edit or delete posts</div>
+    </div>
+
+    <div class="box" id="loginBox">
+      <div class="admin-grid">
+        <input id="adminEmail" placeholder="Email">
+        <input id="adminPassword" type="password" placeholder="Password">
+        <button onclick="adminLogin()">Login</button>
+      </div>
+      <p id="adminStatus"></p>
+    </div>
+
+    <div class="box" id="adminControls" style="display:none">
+      <button onclick="adminLogout()">Logout</button>
+    </div>
+
+    <div id="adminPosts" class="grid"></div>
+  </div>
 </div>
 
 <div class="modal-bg" id="nsfwModal">
@@ -339,6 +390,25 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let currentTab = "sfw";
 let nsfwUnlocked = false;
+
+const allowed = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+function isAdminPage() {
+  return location.hash === "#admin";
+}
+
+function renderPage() {
+  document.getElementById("mainPage").style.display = isAdminPage() ? "none" : "block";
+  document.getElementById("adminPage").style.display = isAdminPage() ? "block" : "none";
+
+  if (isAdminPage()) {
+    checkAdmin();
+  } else {
+    loadGallery();
+  }
+}
+
+window.addEventListener("hashchange", renderPage);
 
 window.switchTab = function(tab) {
   if (tab === "nsfw" && !nsfwUnlocked) {
@@ -378,8 +448,6 @@ window.uploadArt = async function () {
     return;
   }
 
-  const allowed = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-
   for (const file of files) {
     if (!allowed.includes(file.type)) {
       status.textContent = file.name + " invalid type";
@@ -392,40 +460,37 @@ window.uploadArt = async function () {
     }
   }
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    status.textContent = "uploading " + (i + 1) + "/" + files.length;
+  status.textContent = "uploading " + files.length + " image(s)...";
 
-    const safeName = file.name.replace(/[^a-z0-9._-]/gi, "_");
-    const filePath = Date.now() + "_" + i + "_" + safeName;
+  try {
+    await Promise.all(files.map(async (file, i) => {
+      const safeName = file.name.replace(/[^a-z0-9._-]/gi, "_");
+      const filePath = crypto.randomUUID() + "_" + safeName;
 
-    const upload = await supabase.storage.from("art").upload(filePath, file);
+      const upload = await supabase.storage.from("art").upload(filePath, file);
 
-    if (upload.error) {
-      status.textContent = upload.error.message;
-      return;
-    }
+      if (upload.error) throw new Error(upload.error.message);
 
-    const imageUrl = supabase.storage.from("art").getPublicUrl(filePath).data.publicUrl;
+      const imageUrl = supabase.storage.from("art").getPublicUrl(filePath).data.publicUrl;
 
-    const post = await supabase.from("posts").insert({
-      username,
-      title: files.length > 1 ? title + " " + (i + 1) : title,
-      description,
-      image_url: imageUrl,
-      file_path: filePath,
-      nsfw
-    });
+      const post = await supabase.from("posts").insert({
+        username,
+        title: files.length > 1 ? title + " " + (i + 1) : title,
+        description,
+        image_url: imageUrl,
+        file_path: filePath,
+        nsfw
+      });
 
-    if (post.error) {
-      status.textContent = post.error.message;
-      return;
-    }
+      if (post.error) throw new Error(post.error.message);
+    }));
+
+    status.textContent = "uploaded";
+    document.getElementById("file").value = "";
+    loadGallery();
+  } catch (err) {
+    status.textContent = err.message;
   }
-
-  status.textContent = "uploaded";
-  document.getElementById("file").value = "";
-  loadGallery();
 };
 
 async function loadGallery() {
@@ -452,18 +517,152 @@ async function loadGallery() {
       card.className = "card";
 
       card.innerHTML = `
-        <img src="${post.image_url}" loading="lazy">
+        <img src="${cleanAttr(post.image_url)}" loading="lazy">
         <div class="info">
           <h3>${clean(post.title)}</h3>
           <div class="meta">by ${clean(post.username || "anonymous")} · ${clean(time)}</div>
           <div class="desc">${clean(post.description || "")}</div>
-          <a class="download" href="${post.image_url}" download>download</a>
+          <a class="download" href="${cleanAttr(post.image_url)}" download>download</a>
         </div>
       `;
 
       gallery.appendChild(card);
     });
 }
+
+window.adminLogin = async function () {
+  const email = document.getElementById("adminEmail").value.trim();
+  const password = document.getElementById("adminPassword").value;
+  const status = document.getElementById("adminStatus");
+
+  const result = await supabase.auth.signInWithPassword({ email, password });
+
+  if (result.error) {
+    status.textContent = result.error.message;
+    return;
+  }
+
+  status.textContent = "logged in";
+  checkAdmin();
+};
+
+window.adminLogout = async function () {
+  await supabase.auth.signOut();
+  checkAdmin();
+};
+
+async function checkAdmin() {
+  const session = await supabase.auth.getSession();
+  const loggedIn = !!session.data.session;
+
+  document.getElementById("loginBox").style.display = loggedIn ? "none" : "block";
+  document.getElementById("adminControls").style.display = loggedIn ? "block" : "none";
+
+  if (loggedIn) {
+    loadAdminPosts();
+  } else {
+    document.getElementById("adminPosts").innerHTML = "";
+  }
+}
+
+async function loadAdminPosts() {
+  const adminPosts = document.getElementById("adminPosts");
+
+  const result = await supabase
+    .from("posts")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (result.error) {
+    adminPosts.textContent = result.error.message;
+    return;
+  }
+
+  adminPosts.innerHTML = "";
+
+  result.data.forEach(post => {
+    const card = document.createElement("div");
+    card.className = "admin-card";
+
+    card.innerHTML = `
+      <img src="${cleanAttr(post.image_url)}" loading="lazy">
+
+      <input id="title_${post.id}" value="${cleanAttr(post.title || "")}" placeholder="Title">
+      <input id="username_${post.id}" value="${cleanAttr(post.username || "")}" placeholder="Username">
+      <textarea id="description_${post.id}" placeholder="Description">${clean(post.description || "")}</textarea>
+
+      <label class="nsfw-toggle full">
+        <input type="checkbox" id="nsfw_${post.id}" ${post.nsfw ? "checked" : ""}>
+        <div class="nsfw-box"></div>
+        <span>Mark as NSFW</span>
+      </label>
+
+      <input class="full" id="image_${post.id}" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+
+      <button onclick="savePost('${post.id}', '${cleanJs(post.file_path || "")}')">Save changes</button>
+      <button class="danger" onclick="deletePost('${post.id}', '${cleanJs(post.file_path || "")}')">Delete post</button>
+    `;
+
+    adminPosts.appendChild(card);
+  });
+}
+
+window.savePost = async function(id, oldFilePath) {
+  const title = document.getElementById("title_" + id).value.trim();
+  const username = document.getElementById("username_" + id).value.trim() || "anonymous";
+  const description = document.getElementById("description_" + id).value.trim();
+  const nsfw = document.getElementById("nsfw_" + id).checked;
+  const imageInput = document.getElementById("image_" + id);
+  const file = imageInput.files[0];
+
+  const updateData = { title, username, description, nsfw };
+
+  try {
+    if (file) {
+      if (!allowed.includes(file.type)) throw new Error("invalid image type");
+      if (file.size > 10 * 1024 * 1024) throw new Error("image over 10mb");
+
+      const safeName = file.name.replace(/[^a-z0-9._-]/gi, "_");
+      const newFilePath = crypto.randomUUID() + "_" + safeName;
+
+      const upload = await supabase.storage.from("art").upload(newFilePath, file);
+      if (upload.error) throw new Error(upload.error.message);
+
+      const imageUrl = supabase.storage.from("art").getPublicUrl(newFilePath).data.publicUrl;
+
+      updateData.image_url = imageUrl;
+      updateData.file_path = newFilePath;
+
+      if (oldFilePath) {
+        await supabase.storage.from("art").remove([oldFilePath]);
+      }
+    }
+
+    const update = await supabase.from("posts").update(updateData).eq("id", id);
+    if (update.error) throw new Error(update.error.message);
+
+    loadAdminPosts();
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+window.deletePost = async function(id, filePath) {
+  if (!confirm("delete this post?")) return;
+
+  const rowDelete = await supabase.from("posts").delete().eq("id", id);
+
+  if (rowDelete.error) {
+    alert(rowDelete.error.message);
+    return;
+  }
+
+  if (filePath) {
+    await supabase.storage.from("art").remove([filePath]);
+  }
+
+  loadAdminPosts();
+};
 
 function clean(text) {
   return String(text)
@@ -474,7 +673,17 @@ function clean(text) {
     .replaceAll("'","&#039;");
 }
 
-loadGallery();
+function cleanAttr(text) {
+  return clean(text);
+}
+
+function cleanJs(text) {
+  return String(text)
+    .replaceAll("\\", "\\\\")
+    .replaceAll("'", "\\'");
+}
+
+renderPage();
 </script>
 
 </body>
