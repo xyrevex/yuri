@@ -199,6 +199,90 @@
       background: #08080a;
     }
 
+    .folder-card {
+      position: relative;
+      background: linear-gradient(145deg, #22222b, #17171d);
+      border: 1px solid #353542;
+      border-radius: 18px;
+      overflow: hidden;
+      cursor: pointer;
+      min-height: 310px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+    }
+
+    .folder-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 18px;
+      width: 95px;
+      height: 34px;
+      background: #ff6fae;
+      border-radius: 0 0 12px 12px;
+      z-index: 3;
+    }
+
+    .folder-card::after {
+      content: "";
+      position: absolute;
+      inset: 26px 0 auto 0;
+      height: 4px;
+      background: rgba(255, 111, 174, 0.75);
+      z-index: 3;
+    }
+
+    .folder-preview {
+      position: relative;
+      height: 230px;
+      margin: 28px 12px 0;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #0b0b0f;
+      border: 1px solid #363642;
+    }
+
+    .folder-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0.85;
+      display: block;
+    }
+
+    .folder-preview .empty-folder {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #888;
+      font-size: 42px;
+    }
+
+    .folder-badge {
+      position: absolute;
+      top: 42px;
+      right: 20px;
+      z-index: 4;
+      background: rgba(0, 0, 0, 0.65);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 999px;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .folder-info {
+      padding: 13px;
+      position: relative;
+      z-index: 4;
+    }
+
+    .folder-info h3 {
+      margin: 0 0 6px;
+      font-size: 18px;
+    }
+
     .info {
       padding: 13px;
     }
@@ -231,6 +315,30 @@
 
     .download:hover {
       text-decoration: underline;
+    }
+
+    .breadcrumb {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 16px;
+      background: #18181d;
+      border: 1px solid #292932;
+      border-radius: 14px;
+      padding: 13px;
+    }
+
+    .breadcrumb-title {
+      font-weight: bold;
+      color: #fff;
+    }
+
+    .breadcrumb button {
+      width: auto;
+      grid-column: auto;
+      padding: 9px 13px;
+      background: #2a2a34;
     }
 
     .modal-bg {
@@ -326,6 +434,15 @@
       .modal-buttons {
         grid-template-columns: 1fr;
       }
+
+      .breadcrumb {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .breadcrumb button {
+        width: 100%;
+      }
     }
   </style>
 </head>
@@ -380,10 +497,12 @@
       <p id="status"></p>
     </div>
 
-    <div class="box">
-      <select id="galleryFolderFilter" onchange="loadGallery()">
-        <option value="">All folders</option>
-      </select>
+    <div class="breadcrumb" id="folderViewBar">
+      <div>
+        <div class="breadcrumb-title" id="folderViewTitle">Folder</div>
+        <div class="meta" id="folderViewMeta"></div>
+      </div>
+      <button onclick="closeFolder()">Back to folders</button>
     </div>
 
     <div id="gallery" class="grid"></div>
@@ -449,6 +568,7 @@ let currentUser = null;
 let isBanned = false;
 let isAdmin = false;
 let userFolders = [];
+let currentFolderId = null;
 
 const allowed = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
@@ -536,7 +656,7 @@ window.googleLogin = async function() {
   const result = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: location.origin + location.pathname + location.hash
+      redirectTo: location.origin + location.pathname
     }
   });
 
@@ -555,6 +675,7 @@ window.switchTab = function(tab) {
   }
 
   currentTab = tab;
+  currentFolderId = null;
 
   document.getElementById("sfwTab").classList.remove("active");
   document.getElementById("nsfwTab").classList.remove("active");
@@ -607,14 +728,11 @@ async function loadFolders() {
 
 function fillFolderSelects() {
   const uploadSelect = document.getElementById("folderSelect");
-  const filterSelect = document.getElementById("galleryFolderFilter");
 
   uploadSelect.innerHTML = `<option value="">No folder</option>`;
-  filterSelect.innerHTML = `<option value="">All folders</option>`;
 
   for (const folder of userFolders) {
     uploadSelect.innerHTML += `<option value="${cleanAttr(folder.id)}">${clean(folder.name)}</option>`;
-    filterSelect.innerHTML += `<option value="${cleanAttr(folder.id)}">${clean(folder.name)}</option>`;
   }
 }
 
@@ -650,6 +768,7 @@ window.createFolder = async function() {
   document.getElementById("folderName").value = "";
   status.textContent = "folder created";
   await loadFolders();
+  await loadGallery();
 };
 
 async function getImageHash(file) {
@@ -733,49 +852,126 @@ window.uploadArt = async function () {
   }
 };
 
-async function loadGallery() {
-  const gallery = document.getElementById("gallery");
-  const folderFilter = document.getElementById("galleryFolderFilter").value;
-
-  let query = supabase
+async function getVisiblePosts() {
+  const result = await supabase
     .from("posts")
     .select("*, folders(name)")
     .order("created_at", { ascending: false });
 
-  if (folderFilter) query = query.eq("folder_id", folderFilter);
+  if (result.error) throw new Error(result.error.message);
 
-  const result = await query;
-
-  if (result.error) {
-    gallery.textContent = result.error.message;
-    return;
-  }
-
-  gallery.innerHTML = "";
-
-  result.data
-    .filter(post => currentTab === "nsfw" ? post.nsfw : !post.nsfw)
-    .forEach(post => {
-      const time = new Date(post.created_at).toLocaleString();
-      const folderName = post.folders?.name || "No folder";
-
-      const card = document.createElement("div");
-      card.className = "card";
-
-      card.innerHTML = `
-        <img src="${cleanAttr(post.image_url)}" loading="lazy">
-        <div class="info">
-          <h3>${clean(post.title)}</h3>
-          <div class="meta">by ${clean(post.username || "anonymous")} · ${clean(time)}</div>
-          <div class="meta">folder: ${clean(folderName)}</div>
-          <div class="desc">${clean(post.description || "")}</div>
-          <a class="download" href="${cleanAttr(post.image_url)}" download>download</a>
-        </div>
-      `;
-
-      gallery.appendChild(card);
-    });
+  return result.data.filter(post => currentTab === "nsfw" ? post.nsfw : !post.nsfw);
 }
+
+async function loadGallery() {
+  const gallery = document.getElementById("gallery");
+  const folderViewBar = document.getElementById("folderViewBar");
+
+  try {
+    const posts = await getVisiblePosts();
+    gallery.innerHTML = "";
+
+    if (currentFolderId) {
+      folderViewBar.style.display = "flex";
+
+      const folder = userFolders.find(f => f.id === currentFolderId);
+      const folderPosts = posts.filter(post => post.folder_id === currentFolderId);
+
+      document.getElementById("folderViewTitle").textContent = folder ? folder.name : "Folder";
+      document.getElementById("folderViewMeta").textContent = folderPosts.length + " image(s)";
+
+      if (folderPosts.length === 0) {
+        gallery.innerHTML = `<div class="box full">this folder is empty</div>`;
+        return;
+      }
+
+      folderPosts.forEach(post => {
+        gallery.appendChild(makeGalleryCard(post));
+      });
+
+      return;
+    }
+
+    folderViewBar.style.display = "none";
+
+    const folderCards = [];
+
+    for (const folder of userFolders) {
+      const folderPosts = posts.filter(post => post.folder_id === folder.id);
+      folderCards.push(makeFolderCard(folder, folderPosts));
+    }
+
+    folderCards.forEach(card => gallery.appendChild(card));
+
+    const loosePosts = posts.filter(post => !post.folder_id);
+
+    loosePosts.forEach(post => {
+      gallery.appendChild(makeGalleryCard(post));
+    });
+
+    if (folderCards.length === 0 && loosePosts.length === 0) {
+      gallery.innerHTML = `<div class="box full">no posts yet</div>`;
+    }
+  } catch (err) {
+    gallery.textContent = err.message;
+  }
+}
+
+function makeFolderCard(folder, posts) {
+  const card = document.createElement("div");
+  card.className = "folder-card";
+  card.onclick = () => openFolder(folder.id);
+
+  const firstPost = posts[0];
+
+  card.innerHTML = `
+    <div class="folder-badge">${posts.length} image${posts.length === 1 ? "" : "s"}</div>
+    <div class="folder-preview">
+      ${
+        firstPost
+          ? `<img src="${cleanAttr(firstPost.image_url)}" loading="lazy">`
+          : `<div class="empty-folder">folder</div>`
+      }
+    </div>
+    <div class="folder-info">
+      <h3>${clean(folder.name)}</h3>
+      <div class="meta">folder · click to open</div>
+    </div>
+  `;
+
+  return card;
+}
+
+function makeGalleryCard(post) {
+  const time = new Date(post.created_at).toLocaleString();
+  const folderName = post.folders?.name || "No folder";
+
+  const card = document.createElement("div");
+  card.className = "card";
+
+  card.innerHTML = `
+    <img src="${cleanAttr(post.image_url)}" loading="lazy">
+    <div class="info">
+      <h3>${clean(post.title)}</h3>
+      <div class="meta">by ${clean(post.username || "anonymous")} · ${clean(time)}</div>
+      <div class="meta">folder: ${clean(folderName)}</div>
+      <div class="desc">${clean(post.description || "")}</div>
+      <a class="download" href="${cleanAttr(post.image_url)}" download>download</a>
+    </div>
+  `;
+
+  return card;
+}
+
+window.openFolder = function(folderId) {
+  currentFolderId = folderId;
+  loadGallery();
+};
+
+window.closeFolder = function() {
+  currentFolderId = null;
+  loadGallery();
+};
 
 async function checkAdmin() {
   const loggedInAdmin = currentUser && isAdmin;
@@ -883,7 +1079,7 @@ function makeAdminCard(post) {
 
     <button onclick="savePost('${post.id}', '${cleanJs(post.file_path || "")}')">Save changes</button>
     <button class="danger" onclick="deletePost('${post.id}', '${cleanJs(post.file_path || "")}')">Delete post</button>
-    <button class="danger" onclick="banUser('${cleanJs(post.user_id || "")}')">Ban this account</button>
+    <button class="danger" onclick="banUser('${cleanJs(post.user_id || "")}')">Ban this account and delete all posts</button>
   `;
 
   return card;
@@ -956,11 +1152,13 @@ window.banUser = async function(userId) {
     return;
   }
 
+  if (!confirm("Ban this account and delete all their posts?")) return;
+
   const reason = prompt("ban reason?", "banned by admin") || "banned by admin";
 
-  const result = await supabase.from("banned_users").insert({
-    user_id: userId,
-    reason
+  const result = await supabase.rpc("ban_user_and_delete_posts", {
+    target_user: userId,
+    ban_reason: reason
   });
 
   if (result.error) {
@@ -968,7 +1166,11 @@ window.banUser = async function(userId) {
     return;
   }
 
-  alert("account banned");
+  alert("account banned and all posts deleted");
+
+  if (adminTab === "all") loadAdminPosts();
+  if (adminTab === "same") loadSameImages();
+  loadGallery();
 };
 
 function clean(text) {
