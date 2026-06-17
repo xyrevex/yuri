@@ -69,7 +69,7 @@
       margin-bottom: 25px;
     }
 
-    .upload-grid, .admin-grid {
+    .upload-grid, .admin-grid, .auth-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
@@ -112,7 +112,15 @@
       filter: brightness(1.08);
     }
 
-    #status, #adminStatus {
+    .danger {
+      background: #d9365f;
+    }
+
+    .cancel {
+      background: #2a2a34;
+    }
+
+    #status, #adminStatus, #authStatus, #folderStatus {
       color: #bbb;
       margin-bottom: 0;
       font-size: 14px;
@@ -268,10 +276,6 @@
       grid-column: auto;
     }
 
-    .cancel {
-      background: #2a2a34;
-    }
-
     #adminPage {
       display: none;
     }
@@ -293,10 +297,6 @@
       background: #08080a;
     }
 
-    .danger {
-      background: #d9365f;
-    }
-
     .same-group {
       grid-column: 1 / -1;
       background: #18181d;
@@ -310,10 +310,22 @@
       font-size: 20px;
     }
 
+    .small-btn {
+      grid-column: auto;
+    }
+
     @media (max-width: 600px) {
-      .upload-grid, .admin-grid { grid-template-columns: 1fr; }
-      textarea, #file, button, .nsfw-toggle, .full { grid-column: span 1; }
-      .modal-buttons { grid-template-columns: 1fr; }
+      .upload-grid, .admin-grid, .auth-grid {
+        grid-template-columns: 1fr;
+      }
+
+      textarea, #file, button, .nsfw-toggle, .full {
+        grid-column: span 1;
+      }
+
+      .modal-buttons {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -324,18 +336,35 @@
   <div class="wrap">
     <div class="top">
       <h1>Yuri Art Gallery</h1>
-      <div class="sub">post art, browse it, download it</div>
+      <div class="sub">sign in with Google, make folders, upload images</div>
 
       <div class="tabs">
         <div class="tab active" id="sfwTab" onclick="switchTab('sfw')">SFW</div>
         <div class="tab" id="nsfwTab" onclick="switchTab('nsfw')">NSFW</div>
+        <div class="tab" onclick="location.hash='#admin'">Admin</div>
       </div>
     </div>
 
     <div class="box">
+      <div class="auth-grid">
+        <button onclick="googleLogin()">Sign in with Google</button>
+        <button class="cancel" onclick="logout()">Logout</button>
+      </div>
+      <p id="authStatus"></p>
+    </div>
+
+    <div class="box" id="folderBox" style="display:none">
       <div class="upload-grid">
-        <input id="username" placeholder="Username">
+        <input id="folderName" placeholder="New folder name">
+        <button class="small-btn" onclick="createFolder()">Create folder</button>
+      </div>
+      <p id="folderStatus"></p>
+    </div>
+
+    <div class="box" id="uploadBox" style="display:none">
+      <div class="upload-grid">
         <input id="title" placeholder="Title">
+        <select id="folderSelect"></select>
         <textarea id="description" placeholder="Description"></textarea>
         <input id="file" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif">
 
@@ -351,6 +380,12 @@
       <p id="status"></p>
     </div>
 
+    <div class="box">
+      <select id="galleryFolderFilter" onchange="loadGallery()">
+        <option value="">All folders</option>
+      </select>
+    </div>
+
     <div id="gallery" class="grid"></div>
   </div>
 </div>
@@ -359,7 +394,11 @@
   <div class="wrap">
     <div class="top">
       <h1>Admin</h1>
-      <div class="sub">edit or delete posts</div>
+      <div class="sub">edit posts, delete posts, ban accounts</div>
+
+      <div class="tabs">
+        <div class="tab" onclick="location.hash=''">Gallery</div>
+      </div>
 
       <div class="tabs" id="adminTabs" style="display:none">
         <div class="tab active" id="allPostsTab" onclick="switchAdminTab('all')">All Posts</div>
@@ -367,17 +406,13 @@
       </div>
     </div>
 
-    <div class="box" id="loginBox">
-      <div class="admin-grid">
-        <input id="adminEmail" placeholder="Email">
-        <input id="adminPassword" type="password" placeholder="Password">
-        <button onclick="adminLogin()">Login</button>
-      </div>
+    <div class="box" id="adminLoginBox">
+      <button onclick="googleLogin()">Sign in with Google</button>
       <p id="adminStatus"></p>
     </div>
 
     <div class="box" id="adminControls" style="display:none">
-      <button onclick="adminLogout()">Logout</button>
+      <button onclick="logout()">Logout</button>
     </div>
 
     <div id="adminPosts" class="grid"></div>
@@ -410,6 +445,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentTab = "sfw";
 let adminTab = "all";
 let nsfwUnlocked = false;
+let currentUser = null;
+let isBanned = false;
+let isAdmin = false;
+let userFolders = [];
 
 const allowed = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
@@ -417,15 +456,97 @@ function isAdminPage() {
   return location.hash === "#admin";
 }
 
-function renderPage() {
+async function refreshUser() {
+  const sessionResult = await supabase.auth.getSession();
+  currentUser = sessionResult.data.session?.user || null;
+  isBanned = false;
+  isAdmin = false;
+
+  if (currentUser) {
+    const banResult = await supabase
+      .from("banned_users")
+      .select("user_id")
+      .eq("user_id", currentUser.id)
+      .maybeSingle();
+
+    isBanned = !!banResult.data;
+
+    const adminResult = await supabase
+      .from("admins")
+      .select("user_id")
+      .eq("user_id", currentUser.id)
+      .maybeSingle();
+
+    isAdmin = !!adminResult.data;
+  }
+
+  updateAuthUI();
+}
+
+function updateAuthUI() {
+  const authStatus = document.getElementById("authStatus");
+  const adminStatus = document.getElementById("adminStatus");
+  const uploadBox = document.getElementById("uploadBox");
+  const folderBox = document.getElementById("folderBox");
+
+  if (!currentUser) {
+    authStatus.textContent = "not signed in";
+    adminStatus.textContent = "sign in with your admin Google account";
+    uploadBox.style.display = "none";
+    folderBox.style.display = "none";
+    return;
+  }
+
+  if (isBanned) {
+    authStatus.textContent = "signed in as " + currentUser.email + " — banned";
+    adminStatus.textContent = "signed in as " + currentUser.email;
+    uploadBox.style.display = "none";
+    folderBox.style.display = "none";
+    return;
+  }
+
+  authStatus.textContent = "signed in as " + currentUser.email;
+  adminStatus.textContent = "signed in as " + currentUser.email;
+  uploadBox.style.display = "block";
+  folderBox.style.display = "block";
+}
+
+async function renderPage() {
+  await refreshUser();
+
   document.getElementById("mainPage").style.display = isAdminPage() ? "none" : "block";
   document.getElementById("adminPage").style.display = isAdminPage() ? "block" : "none";
 
-  if (isAdminPage()) checkAdmin();
-  else loadGallery();
+  await loadFolders();
+
+  if (isAdminPage()) {
+    await checkAdmin();
+  } else {
+    await loadGallery();
+  }
 }
 
 window.addEventListener("hashchange", renderPage);
+
+supabase.auth.onAuthStateChange(() => {
+  renderPage();
+});
+
+window.googleLogin = async function() {
+  const result = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: location.origin + location.pathname + location.hash
+    }
+  });
+
+  if (result.error) alert(result.error.message);
+};
+
+window.logout = async function() {
+  await supabase.auth.signOut();
+  await renderPage();
+};
 
 window.switchTab = function(tab) {
   if (tab === "nsfw" && !nsfwUnlocked) {
@@ -462,6 +583,75 @@ window.confirmNSFW = function() {
   switchTab("nsfw");
 };
 
+async function loadFolders() {
+  if (!currentUser || isBanned) {
+    userFolders = [];
+    fillFolderSelects();
+    return;
+  }
+
+  const result = await supabase
+    .from("folders")
+    .select("*")
+    .eq("user_id", currentUser.id)
+    .order("created_at", { ascending: true });
+
+  if (result.error) {
+    userFolders = [];
+  } else {
+    userFolders = result.data;
+  }
+
+  fillFolderSelects();
+}
+
+function fillFolderSelects() {
+  const uploadSelect = document.getElementById("folderSelect");
+  const filterSelect = document.getElementById("galleryFolderFilter");
+
+  uploadSelect.innerHTML = `<option value="">No folder</option>`;
+  filterSelect.innerHTML = `<option value="">All folders</option>`;
+
+  for (const folder of userFolders) {
+    uploadSelect.innerHTML += `<option value="${cleanAttr(folder.id)}">${clean(folder.name)}</option>`;
+    filterSelect.innerHTML += `<option value="${cleanAttr(folder.id)}">${clean(folder.name)}</option>`;
+  }
+}
+
+window.createFolder = async function() {
+  const name = document.getElementById("folderName").value.trim();
+  const status = document.getElementById("folderStatus");
+
+  if (!currentUser) {
+    status.textContent = "sign in first";
+    return;
+  }
+
+  if (isBanned) {
+    status.textContent = "you are banned";
+    return;
+  }
+
+  if (!name) {
+    status.textContent = "enter a folder name";
+    return;
+  }
+
+  const result = await supabase.from("folders").insert({
+    user_id: currentUser.id,
+    name
+  });
+
+  if (result.error) {
+    status.textContent = result.error.message;
+    return;
+  }
+
+  document.getElementById("folderName").value = "";
+  status.textContent = "folder created";
+  await loadFolders();
+};
+
 async function getImageHash(file) {
   const buf = await file.arrayBuffer();
   const hash = await crypto.subtle.digest("SHA-256", buf);
@@ -472,12 +662,22 @@ async function getImageHash(file) {
 }
 
 window.uploadArt = async function () {
-  const username = document.getElementById("username").value.trim() || "anonymous";
   const title = document.getElementById("title").value.trim();
   const description = document.getElementById("description").value.trim();
   const files = [...document.getElementById("file").files];
   const nsfw = document.getElementById("nsfwCheck").checked;
+  const folderId = document.getElementById("folderSelect").value || null;
   const status = document.getElementById("status");
+
+  if (!currentUser) {
+    status.textContent = "sign in with Google first";
+    return;
+  }
+
+  if (isBanned) {
+    status.textContent = "you are banned";
+    return;
+  }
 
   if (!title || files.length === 0) {
     status.textContent = "add a title and at least one image";
@@ -501,7 +701,7 @@ window.uploadArt = async function () {
   try {
     await Promise.all(files.map(async (file, i) => {
       const safeName = file.name.replace(/[^a-z0-9._-]/gi, "_");
-      const filePath = crypto.randomUUID() + "_" + safeName;
+      const filePath = currentUser.id + "/" + crypto.randomUUID() + "_" + safeName;
       const imageHash = await getImageHash(file);
 
       const upload = await supabase.storage.from("art").upload(filePath, file);
@@ -511,13 +711,15 @@ window.uploadArt = async function () {
       const imageUrl = supabase.storage.from("art").getPublicUrl(filePath).data.publicUrl;
 
       const post = await supabase.from("posts").insert({
-        username,
+        user_id: currentUser.id,
+        username: currentUser.email,
         title: files.length > 1 ? title + " " + (i + 1) : title,
         description,
         image_url: imageUrl,
         file_path: filePath,
         image_hash: imageHash,
-        nsfw
+        nsfw,
+        folder_id: folderId
       });
 
       if (post.error) throw new Error(post.error.message);
@@ -525,7 +727,7 @@ window.uploadArt = async function () {
 
     status.textContent = "uploaded";
     document.getElementById("file").value = "";
-    loadGallery();
+    await loadGallery();
   } catch (err) {
     status.textContent = err.message;
   }
@@ -533,11 +735,16 @@ window.uploadArt = async function () {
 
 async function loadGallery() {
   const gallery = document.getElementById("gallery");
+  const folderFilter = document.getElementById("galleryFolderFilter").value;
 
-  const result = await supabase
+  let query = supabase
     .from("posts")
-    .select("*")
+    .select("*, folders(name)")
     .order("created_at", { ascending: false });
+
+  if (folderFilter) query = query.eq("folder_id", folderFilter);
+
+  const result = await query;
 
   if (result.error) {
     gallery.textContent = result.error.message;
@@ -550,6 +757,7 @@ async function loadGallery() {
     .filter(post => currentTab === "nsfw" ? post.nsfw : !post.nsfw)
     .forEach(post => {
       const time = new Date(post.created_at).toLocaleString();
+      const folderName = post.folders?.name || "No folder";
 
       const card = document.createElement("div");
       card.className = "card";
@@ -559,6 +767,7 @@ async function loadGallery() {
         <div class="info">
           <h3>${clean(post.title)}</h3>
           <div class="meta">by ${clean(post.username || "anonymous")} · ${clean(time)}</div>
+          <div class="meta">folder: ${clean(folderName)}</div>
           <div class="desc">${clean(post.description || "")}</div>
           <a class="download" href="${cleanAttr(post.image_url)}" download>download</a>
         </div>
@@ -568,38 +777,16 @@ async function loadGallery() {
     });
 }
 
-window.adminLogin = async function () {
-  const email = document.getElementById("adminEmail").value.trim();
-  const password = document.getElementById("adminPassword").value;
-  const status = document.getElementById("adminStatus");
-
-  const result = await supabase.auth.signInWithPassword({ email, password });
-
-  if (result.error) {
-    status.textContent = result.error.message;
-    return;
-  }
-
-  status.textContent = "logged in";
-  checkAdmin();
-};
-
-window.adminLogout = async function () {
-  await supabase.auth.signOut();
-  checkAdmin();
-};
-
 async function checkAdmin() {
-  const session = await supabase.auth.getSession();
-  const loggedIn = !!session.data.session;
+  const loggedInAdmin = currentUser && isAdmin;
 
-  document.getElementById("loginBox").style.display = loggedIn ? "none" : "block";
-  document.getElementById("adminControls").style.display = loggedIn ? "block" : "none";
-  document.getElementById("adminTabs").style.display = loggedIn ? "flex" : "none";
+  document.getElementById("adminLoginBox").style.display = loggedInAdmin ? "none" : "block";
+  document.getElementById("adminControls").style.display = loggedInAdmin ? "block" : "none";
+  document.getElementById("adminTabs").style.display = loggedInAdmin ? "flex" : "none";
 
-  if (loggedIn) {
-    if (adminTab === "all") loadAdminPosts();
-    if (adminTab === "same") loadSameImages();
+  if (loggedInAdmin) {
+    if (adminTab === "all") await loadAdminPosts();
+    if (adminTab === "same") await loadSameImages();
   } else {
     document.getElementById("adminPosts").innerHTML = "";
   }
@@ -608,7 +795,7 @@ async function checkAdmin() {
 async function getAllPosts() {
   const result = await supabase
     .from("posts")
-    .select("*")
+    .select("*, folders(name)")
     .order("created_at", { ascending: false });
 
   if (result.error) throw new Error(result.error.message);
@@ -674,12 +861,17 @@ function makeAdminCard(post) {
   const card = document.createElement("div");
   card.className = "admin-card";
 
+  const folderName = post.folders?.name || "No folder";
+
   card.innerHTML = `
     <img src="${cleanAttr(post.image_url)}" loading="lazy">
 
     <input id="title_${post.id}" value="${cleanAttr(post.title || "")}" placeholder="Title">
     <input id="username_${post.id}" value="${cleanAttr(post.username || "")}" placeholder="Username">
     <textarea id="description_${post.id}" placeholder="Description">${clean(post.description || "")}</textarea>
+
+    <div class="meta full">User ID: ${clean(post.user_id || "none")}</div>
+    <div class="meta full">Folder: ${clean(folderName)}</div>
 
     <label class="nsfw-toggle full">
       <input type="checkbox" id="nsfw_${post.id}" ${post.nsfw ? "checked" : ""}>
@@ -691,6 +883,7 @@ function makeAdminCard(post) {
 
     <button onclick="savePost('${post.id}', '${cleanJs(post.file_path || "")}')">Save changes</button>
     <button class="danger" onclick="deletePost('${post.id}', '${cleanJs(post.file_path || "")}')">Delete post</button>
+    <button class="danger" onclick="banUser('${cleanJs(post.user_id || "")}')">Ban this account</button>
   `;
 
   return card;
@@ -712,7 +905,7 @@ window.savePost = async function(id, oldFilePath) {
       if (file.size > 10 * 1024 * 1024) throw new Error("image over 10mb");
 
       const safeName = file.name.replace(/[^a-z0-9._-]/gi, "_");
-      const newFilePath = crypto.randomUUID() + "_" + safeName;
+      const newFilePath = "admin-replaced/" + crypto.randomUUID() + "_" + safeName;
       const imageHash = await getImageHash(file);
 
       const upload = await supabase.storage.from("art").upload(newFilePath, file);
@@ -755,6 +948,27 @@ window.deletePost = async function(id, filePath) {
 
   if (adminTab === "all") loadAdminPosts();
   if (adminTab === "same") loadSameImages();
+};
+
+window.banUser = async function(userId) {
+  if (!userId) {
+    alert("this old post has no user_id, so it cannot be banned");
+    return;
+  }
+
+  const reason = prompt("ban reason?", "banned by admin") || "banned by admin";
+
+  const result = await supabase.from("banned_users").insert({
+    user_id: userId,
+    reason
+  });
+
+  if (result.error) {
+    alert(result.error.message);
+    return;
+  }
+
+  alert("account banned");
 };
 
 function clean(text) {
